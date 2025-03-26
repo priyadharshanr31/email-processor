@@ -1,0 +1,9 @@
+pandas
+streamlit
+openpyxl
+imaplib2
+email
+smtplib
+mimetypes
+os
+re
