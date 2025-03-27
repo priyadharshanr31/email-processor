@@ -1,119 +1,92 @@
 import streamlit as st
-import pandas as pd
+import asyncio
 import os
-from email_processor import check_email_and_download
+import pandas as pd
+from email_processor import fetch_email
 from process_files import process_latest_file
-from email_sender import send_email_with_attachment
+from email_sender import send_email_async
+from config import ATTACHMENT_FOLDER, OUTPUT_FOLDER
 
 
 
-# Initialize session state variables
-if "file_path" not in st.session_state:
-    st.session_state.file_path = None
-if "sender_email" not in st.session_state:
-    st.session_state.sender_email = None
-if "processed_file" not in st.session_state:
-    st.session_state.processed_file = None
-if "extracted_data" not in st.session_state:
-    st.session_state.extracted_data = None
+# Streamlit App Title
+st.title("📩 Automated Statement Processor")
 
 
 
-# Streamlit UI
-st.title("📧 Automated Email Processor & File Processor")
-
-# Step 1: Email Login
-st.header("Step 1: Enter Email Credentials")
-email_user = st.text_input("Email Address", type="default")
-email_pass = st.text_input("App Password", type="password")
-check_email = st.button("Check for Unread Emails")
+# User Input for Email Credentials
+email_user = st.text_input("📧 Enter Email Address", type="default")
+email_pass = st.text_input("🔑 Enter Email Password", type="password")
 
 
 
-# Step 2: Process Email & Extract Data
-if check_email:
-    if email_user and email_pass:
-        file_path, sender_email = check_email_and_download(email_user, email_pass)
-
-
+# Button to Check Email and Download Attachment
+if st.button("📥 Fetch Latest Email"):
+    if not email_user or not email_pass:
+        st.warning("⚠️ Please enter both email and password.")
+    else:
+        with st.spinner("Fetching latest email..."):
+            file_path, sender_email = asyncio.run(fetch_email(email_user, email_pass))
+        
         if file_path:
+            st.success(f"✅ Attachment downloaded: {file_path}")
             st.session_state.file_path = file_path
             st.session_state.sender_email = sender_email
-
-
-            st.success(f"✅ Email received from: {sender_email}")
-            st.info(f"📂 Downloaded attachment: {file_path}")
-
-            # Extract and show only filtered rows
-            _, extracted_data = process_latest_file(file_path, preview_only=True)
+        else:
+            st.error("❌ No valid attachment found.")
 
 
 
-            if extracted_data is not None and not extracted_data.empty:
-                st.session_state.extracted_data = extracted_data  # Store extracted data
-                st.subheader("Extracted Data Preview (Filtered by Status)")
-                st.dataframe(extracted_data)  # Show only extracted rows
+# User Input for Row Number
+if "file_path" in st.session_state:
+    start_row = st.number_input("🔢 Enter Row Number to Insert Data", min_value=1, value=6)
+
+    # Process File Button
+    if st.button("⚙️ Process File"):
+        with st.spinner("Processing file..."):
+            processed_path, extracted_data = asyncio.run(process_latest_file(st.session_state.file_path, start_row))
+        
+        if processed_path:
+            st.success(f"✅ Processed file saved: {processed_path}")
+            st.session_state.processed_path = processed_path
+            st.session_state.extracted_data = extracted_data
+        else:
+            st.error("❌ Processing failed.")
+
+
+
+# Preview Extracted Data
+if "extracted_data" in st.session_state:
+    st.subheader("📄 Preview 1: Extracted Data")
+    st.dataframe(st.session_state.extracted_data)
+
+
+# Preview Processed File Data
+if "processed_path" in st.session_state:
+    st.subheader("📝 Preview 2: Final Processed Output")
+    try:
+        df_processed = pd.read_excel(st.session_state.processed_path, engine="openpyxl")
+        st.dataframe(df_processed)
+    except Exception as e:
+        st.error(f"❌ Error loading processed file: {e}")
+
+
+
+# Send Email Button
+if "processed_path" in st.session_state and "sender_email" in st.session_state:
+    if st.button("📤 Send Processed File via Email"):
+        if not email_user or not email_pass:
+            st.warning("⚠️ Please enter your email and password.")
+        else:
+            with st.spinner("Sending email..."):
+                result = asyncio.run(send_email_async(
+                    email_user, 
+                    email_pass, 
+                    st.session_state.sender_email, 
+                    st.session_state.processed_path
+                ))
+
+            if result:
+                st.success("✅ Email sent successfully!")
             else:
-                st.warning("⚠️ No matching data found in the received file.")
-        else:
-            st.error("❌ No valid email found.")
-
-
-    else:
-        st.warning("⚠️ Please enter email credentials.")
-
-
-
-# Step 3: Get Start Row Input
-st.header("Step 2: Process with Template")
-start_row = st.number_input("Enter the starting row to process:", min_value=1, value=10, step=1)
-process_button = st.button("Process Files")
-
-
-
-# Step 4: Process Files
-if process_button:
-    if st.session_state.file_path:
-        processed_file, _ = process_latest_file(st.session_state.file_path, start_row)
-        if processed_file:
-            st.session_state.processed_file = processed_file
-            st.success(f"✅ Processed file saved at: {processed_file}")
-        else:
-            st.error("❌ Failed to process files.")
-
-
-    else:
-        st.warning("⚠️ Please check emails and extract data first.")
-
-
-
-# Step 5: Final Processed File Preview
-if st.session_state.processed_file:
-    st.header("Step 3: Final Processed File Preview")
-    final_df = pd.read_excel(st.session_state.processed_file)
-    st.dataframe(final_df)  # Show the full final output file
-
-
-
-# Step 6: Send Email
-st.header("Step 4: Send Email with Processed File")
-send_email = st.button("Send Processed File")
-
-
-if send_email:
-    if st.session_state.file_path and st.session_state.processed_file:
-        email_status = send_email_with_attachment(
-            st.session_state.processed_file, 
-            st.session_state.sender_email, 
-            email_user,  # Pass sender email
-            email_pass   # Pass email password
-        )
-        if email_status:
-            st.success("✅ Email sent successfully!")
-
-
-        else:
-            st.error("❌ Failed to send email.")
-            
-    else:
-        st.warning("⚠️ Please process files before sending.")
+                st.error("❌ Email sending failed.")
