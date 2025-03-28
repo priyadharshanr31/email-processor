@@ -34,17 +34,31 @@ async def process_latest_file(file_path, start_row=10):
 
         # Read existing data
         existing_data = list(ws.values)
-        header_row = list(existing_data[0]) if existing_data else []  # ✅ FIXED: Convert tuple to list
+        header_row = list(existing_data[0]) if existing_data else []  # ✅ Convert tuple to list
 
-        # Ensure "Extracted_Desc" column exists
-        if "Extracted_Desc" not in header_row:
-            header_row.append("Extracted_Desc")
+        # Ensure required columns exist
+        for col in ["Extracted_Desc", "Matched Currency"]:
+            if col not in header_row:
+                header_row.append(col)
+
+        # Add "Matched Currency" column based on template currency
+        if "Currency" in df_filtered.columns and "Currency" in header_row:
+            df_filtered["Matched Currency"] = df_filtered["Currency"].apply(
+                lambda x: "Yes" if x in [row[header_row.index("Currency")] for row in existing_data[1:]] else "No"
+            )
+        else:
+            df_filtered["Matched Currency"] = "No"
 
         # Ensure data order matches template
         for col in header_row:
             if col not in df_filtered.columns:
                 df_filtered[col] = None
         df_filtered = df_filtered[header_row]
+
+        # Format account number columns to remove commas
+        account_cols = [col for col in df_filtered.columns if "Account" in col or "Acct" in col]
+        for col in account_cols:
+            df_filtered[col] = df_filtered[col].astype(str).str.replace(",", "", regex=True)
 
         # Preserve rows before the replacement
         before_insert = existing_data[:start_row - 1]
@@ -55,12 +69,20 @@ async def process_latest_file(file_path, start_row=10):
         # Convert extracted data to lists for different previews
         extracted_data_preview = df_filtered.copy()
         extracted_data_preview["Description"] = df.loc[df_filtered.index, "Description"]  # Restore "Description"
-        
-        # ✅ Remove "Extracted_Desc" column ONLY for Preview 1
-        extracted_data_preview.drop(columns=["Extracted_Desc"], errors="ignore", inplace=True)  
+        extracted_data_preview.drop(columns=["Matched Currency", "Extracted_Desc"], errors="ignore", inplace=True)  # ❌ Removed "Extracted_Desc"
 
-        extracted_data_list = [list(extracted_data_preview.columns)] + extracted_data_preview.values.tolist()  # ✅ Preview 1
-        final_output_list = df_filtered.values.tolist()  # ✅ Final output
+        # Remove commas in Account Number for Preview 1
+        for col in account_cols:
+            extracted_data_preview[col] = extracted_data_preview[col].astype(str).str.replace(",", "", regex=True)
+
+        extracted_data_list = [list(extracted_data_preview.columns)] + extracted_data_preview.values.tolist()  # ✅ Preview 1 (without "Extracted_Desc")
+
+        # 🔹 Fix: Remove commas from Account Number for **Preview 2**  
+        preview_2_final_output = df_filtered.copy()
+        for col in account_cols:
+            preview_2_final_output[col] = preview_2_final_output[col].astype(str).str.replace(",", "", regex=True)
+
+        final_output_list = [list(preview_2_final_output.columns)] + preview_2_final_output.values.tolist()  # ✅ Preview 2 (now without commas)
 
         # Clear only the rows that will be replaced
         for _ in range(len(df_filtered)):
@@ -73,7 +95,7 @@ async def process_latest_file(file_path, start_row=10):
         # Insert data before, extracted, and after
         for row in before_insert[1:]:
             ws.append(row)
-        for row in final_output_list:
+        for row in preview_2_final_output.values.tolist():  # ✅ Includes "Matched Currency" and no commas
             ws.append(row)
         for row in after_insert:
             ws.append(row)
