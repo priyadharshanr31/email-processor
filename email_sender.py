@@ -25,4 +25,3 @@ async def send_email_async(email_user, email_pass, recipient_email, file_path):
     except Exception as e:
         print(f"Email sending failed: {e}")
         return False
-        
